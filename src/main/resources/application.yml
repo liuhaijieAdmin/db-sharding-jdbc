@@ -1,0 +1,175 @@
+mybatis:
+  mapper-locations: classpath*:com/zhuzi/dbshardingjdbc/mapper/*.xml
+  type-aliases-package: com.zhuzi.dbshardingjdbc.model
+
+spring:
+  shardingsphere:
+    # 将运行模式配置为Standalone单机模式（Cluster：集群模式）
+    mode:
+      type: Standalone
+      repository:
+        type: JDBC
+
+    # 配置多数据源
+    datasource:
+      # 为多个数据源配置别名
+      names: ds0,ds1
+      # 配置第一个数据源的详情
+      ds0:
+        driver-class-name: com.mysql.jdbc.Driver
+        type: com.alibaba.druid.pool.DruidDataSource
+        url: jdbc:mysql://localhost:3306/db_sharding_01?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false
+        username: root
+        password: 123
+      # 配置第二个数据源的详情
+      ds1:
+        driver-class-name: com.mysql.jdbc.Driver
+        type: com.alibaba.druid.pool.DruidDataSource
+        url: jdbc:mysql://localhost:3306/db_sharding_02?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false
+        username: root
+        password: 123
+
+    # 执行时显示SQL语句
+    props:
+      # 日志显示具体的SQL
+      sql-show: true
+
+    # 配置分片规则
+    rules:
+      # 配置分片策略
+      sharding:
+        # 配置所有分片表
+        tables:
+          # 首先配置商品表的分片策略
+          shoping:
+            # 声明商品表所在的真实数据节点
+            actual-data-nodes: ds$->{0..1}.shoping_0$->{0..1}
+
+            # 配置分库规则
+            database-strategy:
+              standard:
+                # 配置路由键为shoping_id（数据库中的列名）
+                sharding-column: shoping_id
+                # 配置分片算法（需要配置一个名词，通过别名指向具体的策略）
+                sharding-algorithm-name: db-inline-mod
+
+            # 配置分表规则
+            table-strategy:
+              standard:
+                # 配置分表的路由键：商品名称
+                sharding-column: shoping_name
+                sharding-algorithm-name: key-hash-mod
+
+            # 配置shoping表的主键生成策略
+            key-generate-strategy:
+              # 声明主键为shoping_id
+              column: shoping_id
+              # 同样指向shoping_id_gs这个具体的主键生成策略
+              keygenerator-name: global-id-snowflake
+
+          # 配置订单表的分片策略
+          order:
+            # 声明订单表所在的真实数据节点（ds0.order、ds1.order）
+            actual-data-nodes: ds$->{0..1}.order
+
+            # 配置分库规则
+            database-strategy:
+              standard:
+                # 配置路由键为order_id（数据库中的列名）
+                sharding-column: order_id
+                # 配置分片算法（使用内置的取模分片算法）
+                sharding-algorithm-name: key-int-mod
+
+            # 配置订单表的主键生成策略
+            key-generate-strategy:
+              # 声明主键为order_id
+              column: order_id
+              # 同样使用之前的雪花算法
+              keygenerator-name: global-id-snowflake
+
+          # 配置订单详情表的分片策略
+          order_info:
+            # 声明商品详情表所在的真实数据节点（ds0.order_info、ds1.order_info）
+            actual-data-nodes: ds$->{0..1}.order_info
+
+            # 配置分库规则
+            database-strategy:
+              standard:
+                # 配置路由键为order_id（这里的路由键要和订单表一致）
+                sharding-column: order_id
+                # 配置分片算法（使用内置的取模分片算法）
+                sharding-algorithm-name: key-int-mod
+
+            # 配置订单详情表的主键生成策略
+            key-generate-strategy:
+              # 声明主键为order_info_id
+              column: order_info_id
+              # 同样使用之前的雪花算法
+              keygenerator-name: global-id-snowflake
+
+          # 配置用户详情表的分片策略
+          user_info:
+            # 声明用户详情表所在的真实数据节点（ds0.user_info、ds1.user_info）
+            actual-data-nodes: ds$->{0..1}.user_info
+
+            # 配置订单表表的主键生成策略
+            key-generate-strategy:
+              # 声明主键为user_id
+              column: user_id
+              # 同样使用之前的雪花算法
+              keygenerator-name: global-id-snowflake
+
+        # 这里统一配置所有的主键生成策略
+        key-generators:
+          # 配置上面的主键生成策略
+          global-id-snowflake:
+            # 选择使用内置的雪花算法
+            type: SNOWFLAKE
+            props:
+              # 分配一个工作节点ID（要确保全局唯一）
+              worker-id: 111
+
+        # 这里统一配置所有的分片算法
+        sharding-algorithms:
+          # 配置前面的分库算法
+          db-inline-mod:
+            # 声明是 INLINE 简单类型的分片
+            type: INLINE
+            props:
+              # 选择对shoping_id做取模运算（行表达式方式）
+              algorithm-expression: ds$->{shoping_id % 2}
+
+          # 配置一个自定义的Standard分片算法
+          shop-standard-sharding:
+            # 声明使用自定义的算法实现类
+            type: CLASS_BASED
+              props:
+                # 声明分片策略
+                strategy: STANDARD
+                  # 指明算法实现类（配置全限定名）
+                  algorithmClassName: com.zhuzi.dbshardingjdbc.shardingAlgorithm.ShopStandardSA
+
+          # 配置取模分库算法
+          key-int-mod:
+            # 使用ShardingSphere内置的取模算法
+            type: MOD
+            props:
+              # 声明分库的节点数量
+              sharding-count: 2
+
+          # 配置哈希取模的分表算法
+          key-hash-mod:
+            # 使用内置的哈希取模算法
+            type: HASH_MOD
+            props:
+              # 声明分表的节点数量
+              sharding-count: 2
+
+        # 配置绑定表关系
+        binding-tables:
+          # 配置第一组绑定表的关系（订单表、订单详情表）
+          - order,order_info
+
+        # 配置广播表信息
+        broadcast-tables:
+          - user_info
